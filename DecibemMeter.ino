@@ -1,74 +1,89 @@
 #include <LiquidCrystal.h>
 LiquidCrystal lcd(7, 8, 10, 11, 12, 13);
 
-int num_Measure = 128; // Set the number of measurements   
-int pinSignal = A0; // Pin connected to the sound sensor   
-int redLed = 5; 
-int greenLed = 6; 
-int additionalRedLed = 7; // New Red LED for dB over 100
-int buzzer = 8; // Buzzer pin
-long Sound_signal; // Store the value read from the sound sensor   
-long sum = 0; // Store the total value of n measurements   
-long level = 0; // Store the average value   
-int soundlow = 40;
-int soundmedium = 500;
+int num_Measure = 128;    // Anzahl der Messungen
+int pinSignal = A0;       // Pin für das Mikrofon
+long Sound_signal;        // Gelesene Werte vom Mikrofon
+long sum = 0;             // Summe der Messwerte
+long level = 0;           // Durchschnittswert der Messungen
+int soundThreshold = 100; // Schwellenwert für LEDs
+
+const int redLedPin = 4;   // Pin für die rote LED
+const int greenLedPin = 5; // Pin für die grüne LED
+const int startButtonPin = 2; // Pin für den Start-Button
+const int stopButtonPin = 3;  // Pin für den Stop-Button
+
+int startButtonState = 0; // Status des Start-Buttons
+int stopButtonState = 0;  // Status des Stop-Buttons
+bool collectingData = false; // Zustand der Datensammlung
 
 void setup() {
-  pinMode(pinSignal, INPUT); // Set the signal pin as input   
-  pinMode(redLed, OUTPUT); // Existing red LED
-  pinMode(greenLed, OUTPUT); // New green LED
-  pinMode(additionalRedLed, OUTPUT); // New red LED
-  pinMode(buzzer, OUTPUT); // Buzzer pin
-  Serial.begin(9600);
-  lcd.begin(16, 2);
+  pinMode(pinSignal, INPUT);          // Mikrofon als Eingabe
+  pinMode(redLedPin, OUTPUT);         // Rote LED als Ausgang
+  pinMode(greenLedPin, OUTPUT);       // Grüne LED als Ausgang
+  pinMode(startButtonPin, INPUT_PULLUP); // Start-Button mit Pullup
+  pinMode(stopButtonPin, INPUT_PULLUP);  // Stop-Button mit Pullup
+  Serial.begin(9600);                // Serielle Kommunikation starten
+  lcd.begin(16, 2);                  // LCD initialisieren
+  lcd.clear();                       // LCD leeren
 }
 
 void loop() {
-  // Perform 128 signal readings   
-  for (int i = 0; i < num_Measure; i++) {
-    Sound_signal = analogRead(pinSignal);
-    sum += Sound_signal;
+  // Button-Status lesen
+  startButtonState = digitalRead(startButtonPin);
+  stopButtonState = digitalRead(stopButtonPin);
+
+  // Start-Button gedrückt
+  if (startButtonState == LOW) {
+    collectingData = true;
+    delay(500); // Entprellen
+    Serial.println("START_SCRIPT");
   }
 
-  level = sum / num_Measure; // Calculate the average value   
-  Serial.println(level - 33); // Send the decibel value to Raspberry Pi
-  lcd.setCursor(0, 0);
-  lcd.print("Sound Level= ");
-  lcd.print(level - 33);
-
-  // Buzzer logic for dB == 100
-  if (level - 33 >= 100) {
-    tone(buzzer, 1000);
-  }   else {
-    noTone(buzzer);
+  // Stop-Button gedrückt
+  if (stopButtonState == LOW) {
+    collectingData = false;
+    delay(500); // Entprellen
+    Serial.println("STOP_SCRIPT");
   }
 
+  // Dezibelmessung und Verarbeitung
+  if (collectingData) {
+    for (int i = 0; i < num_Measure; i++) {
+      Sound_signal = analogRead(pinSignal);
+      sum += Sound_signal;
+    }
+    level = sum / num_Measure;
+    sum = 0; // Summe zurücksetzen
 
-  // Green LED logic for dB <= 100
-  if (level - 33 <= 100) {
-    digitalWrite(greenLed, HIGH);
-    digitalWrite(additionalRedLed, LOW);
+    long decibel = level - 33;
+
+    // Dezibelwerte an den Raspberry Pi senden
+    Serial.print("DECIBEL: ");
+    Serial.println(decibel);
+
+    // Dezibelwerte auf dem LCD anzeigen
+    lcd.setCursor(0, 0);
+    lcd.print("Sound Level=     ");
+    lcd.setCursor(0, 0);
+    lcd.print("Sound Level= ");
+    lcd.print(decibel);
+
+    lcd.setCursor(0, 1);
+    if (decibel < soundThreshold) {
+      lcd.print("Intensity= Low  ");
+      digitalWrite(redLedPin, LOW);  // Rote LED aus
+      digitalWrite(greenLedPin, HIGH); // Grüne LED an
+    } else {
+      lcd.print("Intensity= High ");
+      digitalWrite(redLedPin, HIGH); // Rote LED an
+      digitalWrite(greenLedPin, LOW);  // Grüne LED aus
+    }
   } else {
-    digitalWrite(greenLed, LOW);
-    digitalWrite(additionalRedLed, HIGH);
+    // LEDs ausschalten, wenn keine Datensammlung
+    digitalWrite(redLedPin, LOW);
+    digitalWrite(greenLedPin, LOW);
   }
 
-  // Existing LED logic
-  if (level - 33 < soundlow) {
-    lcd.setCursor(0, 1);
-    lcd.print("Intensity= Low");
-    digitalWrite(redLed, LOW);
-  } else if (level - 33 > soundlow && level - 33 < soundmedium) {
-    lcd.setCursor(0, 1);
-    lcd.print("Intensity=Medium");
-    digitalWrite(redLed, LOW);
-  } else if (level - 33 > soundmedium) {
-    lcd.setCursor(0, 1);
-    lcd.print("Intensity= High");
-    digitalWrite(redLed, HIGH);
-  }
-
-  sum = 0; // Reset the sum of the measurement values  
-  delay(1000); // Send data every second
-  lcd.clear();
+  delay(1000); // Warte 1 Sekunde vor der nächsten Messung
 }
